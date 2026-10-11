@@ -42,10 +42,21 @@ class Pipeline:
         self._limits: files.Limits | None = None
 
     # ------------------------------------------------------------- public API
-    async def limits(self) -> files.Limits:
-        if self._limits is None:
+    async def limits(self, *, refresh: bool = False) -> files.Limits:
+        """Кэш лимитов на время работы процесса.
+
+        Лимит Telegram выдаёт сервер по типу аккаунта (Bot API 50 MiB /
+        MTProto 2 GiB / Premium 4 GiB), поэтому «продлить» его можно только
+        апгрейдом аккаунта-загрузчика до Premium — при следующем старте
+        бота (или вызове с refresh=True) новый лимит подтянется сам.
+        """
+        if self._limits is None or refresh:
             self._limits = await files.detect_limits(
-                self.client, chat_id=0, chunk_target=self.cfg.chunk_target_size
+                self.client,
+                chat_id=0,
+                chunk_target=self.cfg.chunk_target_size,
+                force_premium=self.cfg.force_premium,
+                hard_cap=self.cfg.max_file_size,
             )
             log.info(
                 "Лимит размера файла: %s (premium=%s), куски по %s",

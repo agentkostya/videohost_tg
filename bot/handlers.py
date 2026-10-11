@@ -86,12 +86,26 @@ class VideoBot:
 
         @self.client.on(events.NewMessage(pattern=r"^/limits(?:\s+.*)?$", func=lambda e: e.is_private))
         async def cmd_limits(ev):
-            lim = await self.pipeline.limits()
+            await self.handle_limits(ev)
+
+        @self.client.on(events.NewMessage(pattern=r"^/premium$", func=lambda e: e.is_private))
+        async def cmd_premium(ev):
+            if ev.sender_id not in self.cfg.admin_ids:
+                await ev.reply("Команда доступна только администраторам.")
+                return
+            lim = await self.pipeline.limits(refresh=True)
             await ev.reply(
-                f"Лимит одного файла: <b>{files.human(lim.hard_limit)}</b>\n"
-                f"Размер части при нарезке: <b>{files.human(lim.chunk_target)}</b>\n"
-                f"Premium аккаунт: <b>{'да' if lim.is_premium else 'нет'}</b>\n"
-                f"ffmpeg: <b>{'найден' if files.has_ffmpeg() else 'НЕ найден (нарезка недоступна)'}</b>"
+                "Лимит перечитан у сервера Telegram.\n"
+                f"Теперь: <b>{files.human(lim.hard_limit)}</b> "
+                f"(premium={'да' if lim.is_premium else 'нет'})\n\n"
+                "Как поднять лимит «напрямую от Telegram»:\n"
+                "1. 50 MiB — это только Bot API, для него апгрейда не существует.\n"
+                "2. MTProto-аккаунт: 2 GiB по умолчанию.\n"
+                "3. Telegram Premium на аккаунт-загрузчик → до 4 GiB за файл.\n"
+                "   Оформить: @PremiumBot (или подарок premium от другого\n"
+                "   аккаунта). После активации перезапустите бота или\n"
+                "   выполните /premium здесь — новый лимит подтянется сам.\n"
+                "4. Больше 4 GiB — только self-hosted дата-центр."
             )
 
         @self.client.on(events.CallbackQuery)
@@ -294,6 +308,22 @@ class VideoBot:
             if j.status in ("downloading", "uploading", "splitting"):
                 buttons.append([Button.inline(f"Отменить {j.id}", f"cancel:{j.id}".encode())])
         await ev.reply("\n".join(lines), buttons=buttons or None)
+
+    async def handle_limits(self, ev):
+        lim = await self.pipeline.limits()
+        tip = (
+            "Premium на аккаунт-загрузчик активен — файлы до 4 GiB уходят одним сообщением."
+            if lim.is_premium
+            else "Без Premium лимит 2 GiB. Оформите Telegram Premium на аккаунт-загрузчик "
+                 "(@PremiumBot) — после рестарта/обновления бот поднимет лимит до 4 GiB автоматически."
+        )
+        await ev.reply(
+            f"Лимит одного файла: <b>{files.human(lim.hard_limit)}</b>\n"
+            f"Размер части при нарезке: <b>{files.human(lim.chunk_target)}</b>\n"
+            f"Premium аккаунт: <b>{'да' if lim.is_premium else 'нет'}</b>\n"
+            f"ffmpeg: <b>{'найден' if files.has_ffmpeg() else 'НЕ найден (нарезка недоступна)'}</b>\n"
+            f"<i>{tip}</i>"
+        )
 
     async def handle_cancel(self, ev):
         args = (ev.pattern_match.group(0) or "").split()

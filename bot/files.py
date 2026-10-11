@@ -39,34 +39,70 @@ def has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-async def detect_limits(client, chat_id: int, chunk_target: int) -> Limits:
-    """Определяет реальный лимит размера файла для загрузок в данный чат.
+PREMIUM_HARD_LIMIT = 4 * GIB   # абсолютный потолок Telegram для одного файла
+FREE_HARD_LIMIT = 2 * GIB
 
-    Лимит Telegram зависит от типа аккаунта: обычный бот через Bot API — 50 MiB,
-    MTProto-аккаунт — 2 GiB, premium или self-hosted сервер — до 4 GiB.
-    Здесь берём оценку по флагу premium и конфигу сервера (help.getConfig);
-    если файл всё равно не проходит — он будет разрезан на части.
+
+async def detect_limits(
+    client,
+    chat_id: int,
+    chunk_target: int,
+    *,
+    force_premium: bool = False,
+    hard_cap: int = PREMIUM_HARD_LIMIT,
+) -> Limits:
+    """Определяет МАКСИМАЛЬНО возможный лимит размера файла для аккаунта.
+
+    Лимит выдаёт сам Telegram в зависимости от типа аккаунта — отдельно
+    «для бота» его оплатить нельзя, но можно поднять до потолка, разрешённого
+    аккаунту-загрузчику:
+      - Bot API (@BotFather)       — 50 MiB (увеличить нельзя никак);
+      - MTProto-аккаунт            — 2 GiB;
+      - MTProto + Telegram Premium — 4 GiB («продление лимита»: подписка
+        оформляется на аккаунт через @PremiumBot либо подарком);
+      - self-hosted дата-центр     — до 4 GiB.
+
+    Алгоритм: читаем флаг premium, затем переспрашиваем конфиг сервера
+    (help.getConfig, свойство upload_max_filesize_mb) и берём максимум из
+    известных значений с ограничением сверху hard_cap. Значение сервера
+    перечитывается при каждом старте, поэтому сразу после активации Premium
+    лимит поднимется сам. Если файл больше полученного лимита — он режется.
     """
-    is_premium = False
+    is_premium = force_premium
     try:
         me = await client.get_me()
-        is_premium = bool(getattr(me, "premium", False))
+        is_premium = is_premium or bool(getattr(me, "premium", False))
     except Exception as exc:  # noqa: BLE001
         log.debug("premium check failed: %s", exc)
 
-    hard = 4 * GIB if is_premium else 2 * GIB
+    hard = PREMIUM_HARD_LIMIT if is_premium else FREE_HARD_LIMIT
+
+    # Спрашиваем у сервера актуальный лимит загрузки для ЭТОГО аккаунта.
     try:
         from telethon import functions
 
         cfg = await client(functions.help.GetConfigRequest())
-        for p in cfg.properties or []:
-            if p.name == "upload_max_file_size_mb":
-                val = int(float(p.value)) * MIB
-                if val > 0:
-                    hard = max(hard, val)
+        props = {p.name: p.value for p in (cfg.properties or [])}
+        for key in ("upload_max_file_size_mb", "upload_max_filesize_mb"):
+            raw = props.get(key)
+            if not raw:
+                continue
+            try:
+                val = int(float(raw)) * MIB
+            except (TypeError, ValueError):
+                continue
+            if val > 0:
+                new_hard = min(max(hard, val), hard_cap)
+                if new_hard > hard:
+                    log.info(
+                        "Сервер разрешил больший лимит: %s -> %s",
+                        human(hard), human(new_hard),
+                    )
+                hard = new_hard
     except Exception as exc:  # noqa: BLE001
         log.debug("getConfig limits unavailable: %s", exc)
 
+    hard = min(hard, hard_cap)
     chunk = min(max(chunk_target, 8 * MIB), hard)
     return Limits(hard_limit=hard, chunk_target=chunk, is_premium=is_premium)
 

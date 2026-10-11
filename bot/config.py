@@ -40,10 +40,20 @@ class Config:
     db_path: str = os.getenv("DB_PATH", "./data/bot_state.db")
 
     # --- Загрузка файлов ---
-    # Bot API через сервера Telegram: 2 GiB. Self-hosted server: до 4 GiB.
-    max_file_size: int = int(os.getenv("MAX_FILE_SIZE", str(2 * 1024**3)))
-    # Целевой размер одного "куска" при нарезке (для обычных ботов < 50 MiB).
-    chunk_target_size: int = int(os.getenv("CHUNK_TARGET_SIZE", str(48 * 1024**2)))
+    # Лимит на один файл зависит от аккаунта, а НЕ от настроек бота:
+    #   Bot API (@BotFather)      — 50 MiB (увеличить нельзя ничем)
+    #   MTProto-аккаунт           — 2 GiB
+    #   MTProto + Telegram Premium— 4 GiB
+    #   self-hosted DC            — до 4 GiB
+    # MAX_FILE_SIZE — жёсткий потолок (защита от дисковой ошибки), по умолчанию 4 GiB.
+    max_file_size: int = int(os.getenv("MAX_FILE_SIZE", str(4 * 1024**3)))
+    # Целевой размер одного "куска" при нарезке больших видео.
+    # По умолчанию максимум для Premium-аккаунта: целые файлы до 4 GiB
+    # уходят одним сообщением, режутся только файлы больше лимита.
+    chunk_target_size: int = int(os.getenv("CHUNK_TARGET_SIZE", str(4 * 1024**3)))
+    # Принудительно считать аккаунт premium, даже если флаг не подтянулся
+    # (например, куплен недавно и кэш get_me ещё старый).
+    force_premium: bool = os.getenv("FORCE_PREMIUM", "false").lower() in ("1", "true", "yes")
     download_dir: str = os.getenv("DOWNLOAD_DIR", "./downloads")
     keep_files: bool = os.getenv("KEEP_FILES", "false").lower() in ("1", "true", "yes")
 
